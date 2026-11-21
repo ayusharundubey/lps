@@ -132,6 +132,8 @@ export const playerFieldDefSchema = z
     hint: z.string().trim().max(140).optional(),
     required: z.boolean(),
     options: z.array(z.string().trim().min(1).max(60)).optional(),
+    pattern: z.string().trim().max(120).optional(),
+    patternMessage: z.string().trim().max(140).optional(),
   })
   .strict();
 
@@ -159,6 +161,20 @@ export const adminCreateGameSchema = z
   .strict();
 
 export const adminUpdateGameSchema = adminCreateGameSchema.partial().strict();
+
+export const adminCreateGameRegionSchema = z
+  .object({
+    regionCode: z
+      .string()
+      .trim()
+      .toUpperCase()
+      .min(2, 'Region code must be at least 2 characters.')
+      .max(24)
+      .regex(/^[A-Z0-9_-]+$/, 'Region code may only use uppercase letters, numbers, underscores, or hyphens.'),
+    regionName: z.string().trim().min(2, 'Region name is required.').max(80),
+    serverHint: z.string().trim().max(120).optional().nullable(),
+  })
+  .strict();
 
 export const adminCreateCurrencySchema = z
   .object({
@@ -218,6 +234,7 @@ export const adminUpdatePriceSchema = z
     priceInr: z.number().positive('Selling price must be greater than 0.').optional(),
     originalPriceInr: z.number().positive().optional().nullable(),
     discountPercent: z.number().min(0).max(95).optional(),
+    supplierCostInr: z.number().min(0, 'Supplier cost cannot be negative.').optional(),
   })
   .strict();
 

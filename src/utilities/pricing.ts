@@ -204,3 +204,24 @@ export function isValidAdminOrderStatusTransition(targetStatus: string): boolean
   // Phase 3 explicitly prohibits marking unpaid orders as 'paid' or 'refunded'
   return ['pending', 'fulfilling', 'completed', 'cancelled', 'failed'].includes(targetStatus);
 }
+
+export interface PackageMarginSummary {
+  netProfitInr: number;
+  marginPercent: number;
+  lossWarning: boolean;
+}
+
+export function computeMarginSummary(
+  sellingPriceInr: number,
+  supplierCostInr: number
+): PackageMarginSummary {
+  const safeSell = Number.isFinite(sellingPriceInr) && sellingPriceInr > 0 ? sellingPriceInr : 0;
+  const safeCost = Number.isFinite(supplierCostInr) && supplierCostInr >= 0 ? supplierCostInr : 0;
+  const netProfitInr = roundTwo(safeSell - safeCost);
+  const marginPercent = safeSell > 0 ? roundTwo((netProfitInr / safeSell) * 100) : 0;
+  return {
+    netProfitInr,
+    marginPercent,
+    lossWarning: netProfitInr <= 0,
+  };
+}

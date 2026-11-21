@@ -14,6 +14,32 @@ export function isSensitiveFieldForbidden(keyOrLabel: string): boolean {
   return FORBIDDEN_FIELD_PATTERN.test(keyOrLabel);
 }
 
+const UNSAFE_REGEX_NESTED_QUANTIFIER = /(\([^)]*[+*][^)]*\)[+*?{])/;
+
+export function validateSafeRegexPattern(pattern: string): {
+  valid: boolean;
+  regex?: RegExp;
+  error?: string;
+} {
+  const trimmed = pattern.trim();
+  if (!trimmed) return { valid: true };
+  if (trimmed.length > 120) {
+    return { valid: false, error: 'Validation regex pattern must not exceed 120 characters.' };
+  }
+  if (UNSAFE_REGEX_NESTED_QUANTIFIER.test(trimmed)) {
+    return {
+      valid: false,
+      error: 'Validation regex contains nested quantifiers that are unsafe.',
+    };
+  }
+  try {
+    const regex = new RegExp(trimmed);
+    return { valid: true, regex };
+  } catch {
+    return { valid: false, error: 'Validation regex syntax is invalid.' };
+  }
+}
+
 /**
  * Validates and normalizes dynamic per-game player information fields.
  * Strictly prohibits requesting passwords, OTPs, or sensitive credentials.
@@ -59,6 +85,15 @@ export function sanitizeAndValidatePlayerFields(
     if (field.type === 'select' && field.options && field.options.length > 0 && raw) {
       if (!field.options.includes(raw)) {
         errors[field.key] = `Please choose a valid ${field.label}.`;
+        continue;
+      }
+    }
+
+    if (field.pattern && raw) {
+      const check = validateSafeRegexPattern(field.pattern);
+      if (check.valid && check.regex && !check.regex.test(raw)) {
+        errors[field.key] =
+          field.patternMessage?.trim() || `${field.label} does not match the required format.`;
         continue;
       }
     }

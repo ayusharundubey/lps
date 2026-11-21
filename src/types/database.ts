@@ -137,6 +137,8 @@ export interface PlayerFieldDefinition {
   hint?: string;
   required: boolean;
   options?: string[];
+  pattern?: string;
+  patternMessage?: string;
 }
 
 export interface StoreGameSummary {

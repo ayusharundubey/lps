@@ -5,9 +5,12 @@ import {
   CheckCircle2,
   Database,
   Gamepad2,
+  IndianRupee,
   Package,
+  RotateCcw,
   ShieldCheck,
   ShoppingBag,
+  TrendingUp,
   Users,
 } from 'lucide-react';
 import { ROUTES } from '../../configuration/routes';
@@ -107,6 +110,40 @@ export function AdminDashboardPage() {
               Icon={CheckCircle2}
             />
             <StatCard label="Total Customers" value={data.stats.totalCustomers} Icon={Users} />
+          </div>
+
+          {/* Financial & Margin Analytics Snapshot (INR) */}
+          <div className="space-y-2.5">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+              <h3 className="text-sm font-semibold text-white">
+                Financial &amp; Margin Snapshot (INR)
+              </h3>
+              <span className="text-xs text-zinc-400">
+                Computed from non-cancelled order snapshots (unpaid until gateway activation)
+              </span>
+            </div>
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-3.5">
+              <MoneyStatCard
+                label="Order Volume (Unpaid)"
+                value={formatInrPrice(data.stats.grossOrderVolumeInr)}
+                Icon={IndianRupee}
+              />
+              <MoneyStatCard
+                label="Supplier Cost Snapshot"
+                value={formatInrPrice(data.stats.totalSupplierCostInr)}
+                accent="text-zinc-200"
+                Icon={Package}
+              />
+              <MoneyStatCard
+                label="Projected Net Margin"
+                value={formatInrPrice(data.stats.estimatedNetProfitInr)}
+                accent={
+                  data.stats.estimatedNetProfitInr >= 0 ? 'text-emerald-400' : 'text-red-400'
+                }
+                Icon={TrendingUp}
+              />
+              <StatCard label="Refund Requests" value={data.stats.refundsCount} Icon={RotateCcw} />
+            </div>
           </div>
 
           {/* Recent Orders & Recently Added Games */}
@@ -353,6 +390,28 @@ function StatCard({
       <div className={`font-mono tabular-nums text-2xl font-bold ${accent}`}>
         {value.toLocaleString('en-IN')}
       </div>
+    </div>
+  );
+}
+
+function MoneyStatCard({
+  label,
+  value,
+  accent = 'text-white',
+  Icon,
+}: {
+  label: string;
+  value: string;
+  accent?: string;
+  Icon: typeof Gamepad2;
+}) {
+  return (
+    <div className="bg-[#111118] border border-white/[0.08] rounded-xl p-4 space-y-2">
+      <div className="flex items-center justify-between gap-2 text-xs text-zinc-400">
+        <span className="truncate">{label}</span>
+        <Icon className="h-3.5 w-3.5 text-zinc-500 shrink-0" aria-hidden="true" />
+      </div>
+      <div className={`font-mono tabular-nums text-2xl font-bold ${accent}`}>{value}</div>
     </div>
   );
 }

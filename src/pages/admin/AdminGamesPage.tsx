@@ -14,7 +14,7 @@ import { ConfirmDialog } from '../../components/admin/ConfirmDialog';
 import { MediaPickerField } from '../../components/admin/MediaPickerField';
 import { AdminLayout } from '../../layouts/AdminLayout';
 import { ApiError, apiClient } from '../../services/apiClient';
-import type { AdminGameItem, AdminSupplierItem } from '../../types/api';
+import type { AdminGameItem, AdminGameRegionItem, AdminSupplierItem } from '../../types/api';
 import type { PlayerFieldDefinition } from '../../types/database';
 import { slugifyCatalogText } from '../../utilities/pricing';
 
@@ -83,6 +83,13 @@ export function AdminGamesPage() {
   const [deleteLoading, setDeleteLoading] = useState(false);
   const [deleteError, setDeleteError] = useState<string | null>(null);
 
+  const [gameRegions, setGameRegions] = useState<AdminGameRegionItem[]>([]);
+  const [regionsLoading, setRegionsLoading] = useState(false);
+  const [newRegionCode, setNewRegionCode] = useState('');
+  const [newRegionName, setNewRegionName] = useState('');
+  const [newServerHint, setNewServerHint] = useState('');
+  const [regionActionLoading, setRegionActionLoading] = useState(false);
+
   const fetchGames = useCallback(async () => {
     setLoading(true);
     setErrorMsg(null);
@@ -113,8 +120,24 @@ export function AdminGamesPage() {
     setEditingGame(null);
     setSlugTouched(false);
     setForm(createEmptyGameForm(games.length + 1));
+    setGameRegions([]);
+    setNewRegionCode('');
+    setNewRegionName('');
+    setNewServerHint('');
     setFormError(null);
     setModalOpen(true);
+  }
+
+  async function loadGameRegions(gameId: string) {
+    setRegionsLoading(true);
+    try {
+      const res = await apiClient.getAdminGameRegions(gameId);
+      setGameRegions(res.regions);
+    } catch {
+      setGameRegions([]);
+    } finally {
+      setRegionsLoading(false);
+    }
   }
 
   function openEditModal(game: AdminGameItem) {
@@ -136,8 +159,12 @@ export function AdminGamesPage() {
       playerFields:
         game.playerFields.length > 0 ? game.playerFields : [{ ...DEFAULT_PLAYER_FIELD }],
     });
+    setNewRegionCode('');
+    setNewRegionName('');
+    setNewServerHint('');
     setFormError(null);
     setModalOpen(true);
+    void loadGameRegions(game.id);
   }
 
   function updatePlayerField(index: number, patch: Partial<PlayerFieldDefinition>) {
@@ -181,6 +208,8 @@ export function AdminGamesPage() {
         key: (f.key || slugifyCatalogText(f.label).replace(/-/g, '_')).slice(0, 40) || 'player_id',
         label: f.label.trim(),
         placeholder: f.placeholder?.trim() || undefined,
+        pattern: f.pattern?.trim() || undefined,
+        patternMessage: f.patternMessage?.trim() || undefined,
       }));
 
     if (cleanedFields.length === 0) {
@@ -251,6 +280,47 @@ export function AdminGamesPage() {
       }
     } finally {
       setDeleteLoading(false);
+    }
+  }
+
+  async function handleAddRegion() {
+    if (!editingGame) return;
+    const code = newRegionCode.trim().toUpperCase();
+    const name = newRegionName.trim();
+    if (!code || !name) {
+      setFormError('Enter both Region Code (e.g. AP) and Region Name (e.g. Asia Pacific).');
+      return;
+    }
+    setFormError(null);
+    setRegionActionLoading(true);
+    try {
+      await apiClient.createAdminGameRegion(editingGame.id, {
+        regionCode: code,
+        regionName: name,
+        serverHint: newServerHint.trim() || null,
+      });
+      setNewRegionCode('');
+      setNewRegionName('');
+      setNewServerHint('');
+      await loadGameRegions(editingGame.id);
+    } catch (err) {
+      setFormError(err instanceof Error ? err.message : 'Unable to add region.');
+    } finally {
+      setRegionActionLoading(false);
+    }
+  }
+
+  async function handleDeleteRegion(regionId: string) {
+    if (!editingGame) return;
+    setRegionActionLoading(true);
+    setFormError(null);
+    try {
+      await apiClient.deleteAdminGameRegion(regionId);
+      await loadGameRegions(editingGame.id);
+    } catch (err) {
+      setFormError(err instanceof Error ? err.message : 'Unable to delete region.');
+    } finally {
+      setRegionActionLoading(false);
     }
   }
 
@@ -757,55 +827,156 @@ export function AdminGamesPage() {
                   {form.playerFields.map((field, index) => (
                     <div
                       key={`${field.key}-${index}`}
-                      className="grid sm:grid-cols-12 gap-2 items-center rounded-lg border border-white/[0.08] bg-[#09090E] p-2.5"
+                      className="rounded-lg border border-white/[0.08] bg-[#09090E] p-2.5 space-y-2"
                     >
-                      <input
-                        type="text"
-                        value={field.label}
-                        onChange={(e) => updatePlayerField(index, { label: e.target.value })}
-                        placeholder="Field Label (e.g. Player ID)"
-                        aria-label={`Player field ${index + 1} label`}
-                        className="sm:col-span-4 rounded-md bg-[#111118] border border-white/[0.1] px-2.5 py-1.5 text-xs text-white"
-                      />
-                      <input
-                        type="text"
-                        value={field.placeholder || ''}
-                        onChange={(e) => updatePlayerField(index, { placeholder: e.target.value })}
-                        placeholder="Placeholder hint"
-                        aria-label={`Player field ${index + 1} placeholder`}
-                        className="sm:col-span-4 rounded-md bg-[#111118] border border-white/[0.1] px-2.5 py-1.5 text-xs text-white"
-                      />
-                      <label className="sm:col-span-2 inline-flex items-center gap-1.5 text-xs text-zinc-300 px-1">
+                      <div className="grid sm:grid-cols-12 gap-2 items-center">
                         <input
-                          type="checkbox"
-                          checked={field.required}
-                          onChange={(e) =>
-                            updatePlayerField(index, { required: e.target.checked })
-                          }
-                          className="rounded border-white/20 bg-[#111118]"
+                          type="text"
+                          value={field.label}
+                          onChange={(e) => updatePlayerField(index, { label: e.target.value })}
+                          placeholder="Field Label (e.g. Player ID)"
+                          aria-label={`Player field ${index + 1} label`}
+                          className="sm:col-span-4 rounded-md bg-[#111118] border border-white/[0.1] px-2.5 py-1.5 text-xs text-white"
                         />
-                        <span>Required</span>
-                      </label>
-                      <div className="sm:col-span-2 flex justify-end">
-                        <button
-                          type="button"
-                          disabled={form.playerFields.length <= 1}
-                          onClick={() =>
-                            setForm((prev) => ({
-                              ...prev,
-                              playerFields: prev.playerFields.filter((_, idx) => idx !== index),
-                            }))
+                        <input
+                          type="text"
+                          value={field.placeholder || ''}
+                          onChange={(e) => updatePlayerField(index, { placeholder: e.target.value })}
+                          placeholder="Placeholder hint"
+                          aria-label={`Player field ${index + 1} placeholder`}
+                          className="sm:col-span-4 rounded-md bg-[#111118] border border-white/[0.1] px-2.5 py-1.5 text-xs text-white"
+                        />
+                        <label className="sm:col-span-2 inline-flex items-center gap-1.5 text-xs text-zinc-300 px-1">
+                          <input
+                            type="checkbox"
+                            checked={field.required}
+                            onChange={(e) =>
+                              updatePlayerField(index, { required: e.target.checked })
+                            }
+                            className="rounded border-white/20 bg-[#111118]"
+                          />
+                          <span>Required</span>
+                        </label>
+                        <div className="sm:col-span-2 flex justify-end">
+                          <button
+                            type="button"
+                            disabled={form.playerFields.length <= 1}
+                            onClick={() =>
+                              setForm((prev) => ({
+                                ...prev,
+                                playerFields: prev.playerFields.filter((_, idx) => idx !== index),
+                              }))
+                            }
+                            aria-label={`Remove player field ${index + 1}`}
+                            className="px-2 py-1 text-xs text-red-300 hover:text-red-200 disabled:opacity-40"
+                          >
+                            Remove
+                          </button>
+                        </div>
+                      </div>
+                      <div className="grid sm:grid-cols-2 gap-2">
+                        <input
+                          type="text"
+                          value={field.pattern || ''}
+                          onChange={(e) => updatePlayerField(index, { pattern: e.target.value })}
+                          placeholder="Validation Regex (Optional, e.g. ^[0-9]{6,12}$)"
+                          aria-label={`Player field ${index + 1} validation regex`}
+                          className="rounded-md bg-[#111118] border border-white/[0.1] px-2.5 py-1.5 text-[11px] font-mono text-zinc-200"
+                        />
+                        <input
+                          type="text"
+                          value={field.patternMessage || ''}
+                          onChange={(e) =>
+                            updatePlayerField(index, { patternMessage: e.target.value })
                           }
-                          aria-label={`Remove player field ${index + 1}`}
-                          className="px-2 py-1 text-xs text-red-300 hover:text-red-200 disabled:opacity-40"
-                        >
-                          Remove
-                        </button>
+                          placeholder="Format error hint (Optional)"
+                          aria-label={`Player field ${index + 1} format error message`}
+                          className="rounded-md bg-[#111118] border border-white/[0.1] px-2.5 py-1.5 text-[11px] text-zinc-200"
+                        />
                       </div>
                     </div>
                   ))}
                 </div>
               </div>
+
+              {/* Server / Regions Management (Edit mode) */}
+              {editingGame && (
+                <div className="space-y-3 pt-2 border-t border-white/[0.08]">
+                  <div>
+                    <div className="text-xs font-semibold text-white">Server / Region List</div>
+                    <p className="text-[11px] text-zinc-400">
+                      Configure selectable server regions shown to customers during top-up checkout.
+                    </p>
+                  </div>
+
+                  {regionsLoading ? (
+                    <div className="text-xs text-zinc-400">Loading server regions...</div>
+                  ) : gameRegions.length > 0 ? (
+                    <div className="flex flex-wrap gap-2">
+                      {gameRegions.map((reg) => (
+                        <div
+                          key={reg.id}
+                          className="inline-flex items-center gap-2 rounded-lg border border-white/[0.1] bg-[#09090E] px-2.5 py-1.5 text-xs text-zinc-200"
+                        >
+                          <span className="font-mono text-violet-300">{reg.regionCode}</span>
+                          <span>{reg.regionName}</span>
+                          {reg.serverHint && (
+                            <span className="text-zinc-500">({reg.serverHint})</span>
+                          )}
+                          <button
+                            type="button"
+                            disabled={regionActionLoading}
+                            onClick={() => void handleDeleteRegion(reg.id)}
+                            aria-label={`Remove region ${reg.regionName}`}
+                            className="text-red-400 hover:text-red-300 ml-1"
+                          >
+                            <X className="h-3.5 w-3.5" aria-hidden="true" />
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <p className="text-xs text-zinc-500">
+                      No regions configured (checkout will not require a region selector).
+                    </p>
+                  )}
+
+                  <div className="grid sm:grid-cols-12 gap-2 items-center">
+                    <input
+                      type="text"
+                      value={newRegionCode}
+                      onChange={(e) => setNewRegionCode(e.target.value.toUpperCase())}
+                      placeholder="Code (e.g. SEA)"
+                      aria-label="New region code"
+                      className="sm:col-span-3 rounded-md bg-[#09090E] border border-white/[0.12] px-2.5 py-1.5 text-xs font-mono text-white"
+                    />
+                    <input
+                      type="text"
+                      value={newRegionName}
+                      onChange={(e) => setNewRegionName(e.target.value)}
+                      placeholder="Region Name (e.g. Southeast Asia)"
+                      aria-label="New region name"
+                      className="sm:col-span-4 rounded-md bg-[#09090E] border border-white/[0.12] px-2.5 py-1.5 text-xs text-white"
+                    />
+                    <input
+                      type="text"
+                      value={newServerHint}
+                      onChange={(e) => setNewServerHint(e.target.value)}
+                      placeholder="Hint (Optional)"
+                      aria-label="New region server hint"
+                      className="sm:col-span-3 rounded-md bg-[#09090E] border border-white/[0.12] px-2.5 py-1.5 text-xs text-white"
+                    />
+                    <button
+                      type="button"
+                      disabled={regionActionLoading}
+                      onClick={() => void handleAddRegion()}
+                      className="sm:col-span-2 px-2.5 py-1.5 rounded-md bg-white/[0.08] border border-white/[0.14] text-xs font-medium text-white hover:bg-white/[0.14] disabled:opacity-50"
+                    >
+                      + Region
+                    </button>
+                  </div>
+                </div>
+              )}
 
               <div className="pt-4 border-t border-white/[0.08] flex items-center justify-end gap-3">
                 <button

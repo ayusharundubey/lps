@@ -49,6 +49,10 @@ export interface AdminDashboardStats {
   pendingOrders: number;
   completedOrders: number;
   totalCustomers: number;
+  grossOrderVolumeInr: number;
+  totalSupplierCostInr: number;
+  estimatedNetProfitInr: number;
+  refundsCount: number;
 }
 
 export interface AdminRecentOrderSummary {
@@ -130,6 +134,15 @@ export interface AdminGameItem {
   packageCount: number;
   orderCount: number;
   createdAt: string;
+}
+
+export interface AdminGameRegionItem {
+  id: string;
+  gameId: string;
+  regionCode: string;
+  regionName: string;
+  serverHint: string | null;
+  isActive: boolean;
 }
 
 export interface AdminCurrencyItem {
@@ -299,6 +312,8 @@ export interface AdminOrderItem {
   processingStartedAt: string | null;
   completedByName: string | null;
   fulfilledAt: string | null;
+  gatewayTxId?: string | null;
+  supplierTxId?: string | null;
   supplierOrders?: SupplierOrderItem[];
   deliveryLogs?: OrderDeliveryLogItem[];
   createdAt: string;

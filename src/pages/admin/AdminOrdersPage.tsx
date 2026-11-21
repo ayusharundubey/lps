@@ -325,7 +325,7 @@ export function AdminOrdersPage() {
               type="search"
               value={search}
               onChange={(e) => setSearch(e.target.value)}
-              placeholder="Search Order ID, Player ID, email..."
+              placeholder="Search Order #, Player ID, Gateway/Supplier Tx ID, email..."
               aria-label="Search orders"
               className="w-full rounded-lg bg-[#09090E] border border-white/[0.12] pl-9 pr-3 py-2 text-sm text-white placeholder:text-zinc-500 focus:border-blue-500"
             />
@@ -533,6 +533,22 @@ export function AdminOrdersPage() {
                         {selectedOrder.displayPaymentStatus}
                       </span>
                     </div>
+                    {selectedOrder.gatewayTxId && (
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="text-zinc-400">Gateway Tx ID</span>
+                        <span className="font-mono text-zinc-200 truncate">
+                          {selectedOrder.gatewayTxId}
+                        </span>
+                      </div>
+                    )}
+                    {selectedOrder.supplierTxId && (
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="text-zinc-400">Supplier Tx ID</span>
+                        <span className="font-mono text-zinc-200 truncate">
+                          {selectedOrder.supplierTxId}
+                        </span>
+                      </div>
+                    )}
                   </div>
 
                   <div className="rounded-lg border border-white/[0.08] bg-[#09090E] p-4 space-y-2">

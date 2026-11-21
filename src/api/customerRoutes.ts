@@ -435,6 +435,7 @@ storeRouter.post(
       package_id: string;
       package_active: boolean;
       price_inr: string;
+      supplier_cost_inr: string;
       package_delivery_type: 'manual' | 'automatic' | 'both';
       game_id: string;
       game_active: boolean;
@@ -446,6 +447,7 @@ storeRouter.post(
          p.id AS package_id,
          p.is_active AS package_active,
          p.price_inr::text,
+         p.supplier_cost_inr::text,
          p.delivery_type AS package_delivery_type,
          g.id AS game_id,
          g.is_active AS game_active,
@@ -553,6 +555,7 @@ storeRouter.post(
     });
 
     const unitPriceInr = Number(pkg.price_inr);
+    const unitSupplierCostInr = Number(pkg.supplier_cost_inr || '0');
     const totalInr = Number((unitPriceInr * quantity).toFixed(2));
     const amountPaise = convertInrToPaise(totalInr);
     const orderNumber = `LPS-${Date.now().toString(36).toUpperCase()}-${crypto
@@ -580,8 +583,8 @@ storeRouter.post(
 
       await tx.query(
         `INSERT INTO public.order_items
-           (order_id, package_id, game_id, region_id, quantity, unit_price_inr, total_price_inr, target_player_uid, target_server_id, player_details, fulfillment_status)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10::jsonb, 'pending')`,
+           (order_id, package_id, game_id, region_id, quantity, unit_price_inr, total_price_inr, unit_supplier_cost_inr, target_player_uid, target_server_id, player_details, fulfillment_status)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11::jsonb, 'pending')`,
         [
           orderId,
           pkg.package_id,
@@ -590,6 +593,7 @@ storeRouter.post(
           quantity,
           unitPriceInr,
           totalInr,
+          unitSupplierCostInr,
           fieldValidation.targetPlayerUid,
           fieldValidation.targetServerId,
           JSON.stringify(fieldValidation.sanitizedDetails),

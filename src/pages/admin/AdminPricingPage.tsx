@@ -4,11 +4,12 @@ import { AdminLayout } from '../../layouts/AdminLayout';
 import { apiClient } from '../../services/apiClient';
 import type { AdminCurrencyItem, AdminPackageItem } from '../../types/api';
 import { formatInrPrice } from '../../utilities/orderDraft';
-import { computeNormalizedPackagePricing } from '../../utilities/pricing';
+import { computeMarginSummary, computeNormalizedPackagePricing } from '../../utilities/pricing';
 
 interface InlineDraft {
   priceInr: string;
   originalPriceInr: string;
+  supplierCostInr: string;
 }
 
 export function AdminPricingPage() {
@@ -19,7 +20,11 @@ export function AdminPricingPage() {
   const [currencyFilter, setCurrencyFilter] = useState('all');
 
   const [editingId, setEditingId] = useState<string | null>(null);
-  const [draft, setDraft] = useState<InlineDraft>({ priceInr: '', originalPriceInr: '' });
+  const [draft, setDraft] = useState<InlineDraft>({
+    priceInr: '',
+    originalPriceInr: '',
+    supplierCostInr: '',
+  });
   const [savingId, setSavingId] = useState<string | null>(null);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [successMsg, setSuccessMsg] = useState<string | null>(null);
@@ -53,6 +58,7 @@ export function AdminPricingPage() {
     setDraft({
       priceInr: String(pkg.priceInr),
       originalPriceInr: pkg.originalPriceInr !== null ? String(pkg.originalPriceInr) : '',
+      supplierCostInr: String(pkg.supplierCostInr || 0),
     });
     setErrorMsg(null);
     setSuccessMsg(null);
@@ -66,6 +72,12 @@ export function AdminPricingPage() {
     const parsedOriginal = draft.originalPriceInr.trim()
       ? Number(draft.originalPriceInr)
       : null;
+    const parsedCost = draft.supplierCostInr.trim() ? Number(draft.supplierCostInr) : 0;
+
+    if (!Number.isFinite(parsedCost) || parsedCost < 0) {
+      setErrorMsg('Supplier cost in INR cannot be negative.');
+      return;
+    }
 
     const computed = computeNormalizedPackagePricing({
       priceInr: Number.isFinite(parsedPrice) ? parsedPrice : undefined,
@@ -83,6 +95,7 @@ export function AdminPricingPage() {
         priceInr: computed.priceInr,
         originalPriceInr: computed.originalPriceInr,
         discountPercent: computed.discountPercent,
+        supplierCostInr: parsedCost,
       });
       setPackages((prev) =>
         prev.map((row) =>
@@ -92,6 +105,7 @@ export function AdminPricingPage() {
                 priceInr: updated.priceInr,
                 originalPriceInr: updated.originalPriceInr,
                 discountPercent: updated.discountPercent,
+                supplierCostInr: updated.supplierCostInr,
               }
             : row
         )
@@ -100,7 +114,7 @@ export function AdminPricingPage() {
       setSuccessMsg(
         `Updated "${pkg.name}" selling price to ${formatInrPrice(updated.priceInr)}${
           updated.discountPercent > 0 ? ` (${updated.discountPercent}% OFF)` : ''
-        }.`
+        } · Cost ${formatInrPrice(updated.supplierCostInr)}.`
       );
     } catch (err) {
       setErrorMsg(err instanceof Error ? err.message : 'Unable to update package price.');
@@ -192,8 +206,10 @@ export function AdminPricingPage() {
                     <th className="py-3.5 px-4 font-medium">Game</th>
                     <th className="py-3.5 px-4 font-medium">Package</th>
                     <th className="py-3.5 px-4 font-medium">Currency</th>
-                    <th className="py-3.5 px-4 font-medium text-right">Original Price (INR)</th>
-                    <th className="py-3.5 px-4 font-medium text-right">Selling Price (INR)</th>
+                    <th className="py-3.5 px-4 font-medium text-right">Original MRP</th>
+                    <th className="py-3.5 px-4 font-medium text-right">Selling Price</th>
+                    <th className="py-3.5 px-4 font-medium text-right">Supplier Cost</th>
+                    <th className="py-3.5 px-4 font-medium text-right">Net Margin</th>
                     <th className="py-3.5 px-4 font-medium text-right">Discount</th>
                     <th className="py-3.5 px-4 font-medium text-right">Action</th>
                   </tr>
@@ -202,6 +218,11 @@ export function AdminPricingPage() {
                   {packages.map((pkg) => {
                     const isEditing = editingId === pkg.id;
                     const isSaving = savingId === pkg.id;
+                    const activeSell = isEditing ? Number(draft.priceInr || 0) : pkg.priceInr;
+                    const activeCost = isEditing
+                      ? Number(draft.supplierCostInr || 0)
+                      : pkg.supplierCostInr || 0;
+                    const margin = computeMarginSummary(activeSell, activeCost);
                     return (
                       <tr key={pkg.id} className="hover:bg-white/[0.02]">
                         <td className="py-3.5 px-4 font-medium text-zinc-200 whitespace-nowrap">
@@ -231,7 +252,7 @@ export function AdminPricingPage() {
                               }
                               aria-label={`Original price INR for ${pkg.name}`}
                               placeholder="Optional"
-                              className="w-28 rounded-md bg-[#09090E] border border-white/[0.2] px-2.5 py-1.5 text-right text-xs font-mono text-white"
+                              className="w-24 rounded-md bg-[#09090E] border border-white/[0.2] px-2.5 py-1.5 text-right text-xs font-mono text-white"
                             />
                           ) : pkg.originalPriceInr !== null ? (
                             <span className="text-zinc-400 line-through">
@@ -252,13 +273,42 @@ export function AdminPricingPage() {
                                 setDraft((prev) => ({ ...prev, priceInr: e.target.value }))
                               }
                               aria-label={`Selling price INR for ${pkg.name}`}
-                              className="w-28 rounded-md bg-[#09090E] border border-violet-500/60 px-2.5 py-1.5 text-right text-xs font-mono text-white"
+                              className="w-24 rounded-md bg-[#09090E] border border-violet-500/60 px-2.5 py-1.5 text-right text-xs font-mono text-white"
                             />
                           ) : (
                             <span className="font-semibold text-white">
                               {formatInrPrice(pkg.priceInr)}
                             </span>
                           )}
+                        </td>
+                        <td className="py-3.5 px-4 text-right font-mono tabular-nums whitespace-nowrap">
+                          {isEditing ? (
+                            <input
+                              type="number"
+                              min={0}
+                              step="0.01"
+                              value={draft.supplierCostInr}
+                              onChange={(e) =>
+                                setDraft((prev) => ({ ...prev, supplierCostInr: e.target.value }))
+                              }
+                              aria-label={`Supplier cost INR for ${pkg.name}`}
+                              className="w-24 rounded-md bg-[#09090E] border border-white/[0.2] px-2.5 py-1.5 text-right text-xs font-mono text-white"
+                            />
+                          ) : (
+                            <span className="text-zinc-300">
+                              {formatInrPrice(pkg.supplierCostInr || 0)}
+                            </span>
+                          )}
+                        </td>
+                        <td className="py-3.5 px-4 text-right font-mono tabular-nums whitespace-nowrap">
+                          <span
+                            className={
+                              margin.lossWarning ? 'text-red-400 font-semibold' : 'text-emerald-400'
+                            }
+                          >
+                            {margin.netProfitInr >= 0 ? '+' : ''}
+                            {formatInrPrice(margin.netProfitInr)} ({margin.marginPercent}%)
+                          </span>
                         </td>
                         <td className="py-3.5 px-4 text-right font-mono tabular-nums whitespace-nowrap">
                           {isEditing ? (

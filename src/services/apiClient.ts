@@ -2,6 +2,7 @@ import type {
   AdminCurrencyItem,
   AdminCustomerItem,
   AdminGameItem,
+  AdminGameRegionItem,
   AdminMediaItem,
   AdminOrderItem,
   AdminOverviewResponse,
@@ -234,6 +235,28 @@ export const apiClient = {
       method: 'DELETE',
     }),
 
+  getAdminGameRegions: (gameId: string) =>
+    request<{ regions: AdminGameRegionItem[] }>(
+      `/api/admin/catalog/games/${encodeURIComponent(gameId)}/regions`
+    ),
+
+  createAdminGameRegion: (
+    gameId: string,
+    payload: { regionCode: string; regionName: string; serverHint?: string | null }
+  ) =>
+    request<{ region: AdminGameRegionItem }>(
+      `/api/admin/catalog/games/${encodeURIComponent(gameId)}/regions`,
+      {
+        method: 'POST',
+        body: JSON.stringify(payload),
+      }
+    ),
+
+  deleteAdminGameRegion: (regionId: string) =>
+    request<{ ok: boolean }>(`/api/admin/catalog/regions/${encodeURIComponent(regionId)}`, {
+      method: 'DELETE',
+    }),
+
   getAdminCurrencies: () =>
     request<{ currencies: AdminCurrencyItem[] }>('/api/admin/catalog/currencies'),
 
@@ -361,13 +384,19 @@ export const apiClient = {
 
   updateAdminPackagePrice: (
     id: string,
-    payload: { priceInr?: number; originalPriceInr?: number | null; discountPercent?: number }
+    payload: {
+      priceInr?: number;
+      originalPriceInr?: number | null;
+      discountPercent?: number;
+      supplierCostInr?: number;
+    }
   ) =>
     request<{
       id: string;
       priceInr: number;
       originalPriceInr: number | null;
       discountPercent: number;
+      supplierCostInr: number;
     }>(`/api/admin/catalog/packages/${encodeURIComponent(id)}/price`, {
       method: 'PATCH',
       body: JSON.stringify(payload),

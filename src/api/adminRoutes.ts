@@ -12,6 +12,7 @@ import type {
   AdminCurrencyItem,
   AdminCustomerItem,
   AdminGameItem,
+  AdminGameRegionItem,
   AdminMediaItem,
   AdminOrderItem,
   AdminOverviewResponse,
@@ -50,10 +51,11 @@ import {
   mapPhase4PaymentStatusLabel,
   validateOrderCompletionGuard,
 } from '../utilities/orderDelivery';
-import { isSensitiveFieldForbidden } from '../utilities/playerFields';
+import { isSensitiveFieldForbidden, validateSafeRegexPattern } from '../utilities/playerFields';
 import { computeNormalizedPackagePricing } from '../utilities/pricing';
 import {
   adminCreateCurrencySchema,
+  adminCreateGameRegionSchema,
   adminCreateGameSchema,
   adminCreatePackageSchema,
   adminCreateSupplierSchema,
@@ -213,6 +215,7 @@ adminRouter.get(
       pkgStatsRes,
       orderStatsRes,
       customerStatsRes,
+      financialStatsRes,
       recentOrdersRes,
       recentGamesRes,
     ] = await Promise.all([
@@ -251,6 +254,24 @@ adminRouter.get(
          FROM public.orders`
       ),
       db.query<{ total: string }>(`SELECT COUNT(*)::text AS total FROM public.customers`),
+      db.query<{ gross_volume: string; supplier_cost: string; net_profit: string; refunds_count: string }>(
+        `SELECT
+           COALESCE(SUM(o.total_inr) FILTER (WHERE o.status NOT IN ('cancelled', 'refunded')), 0)::text AS gross_volume,
+           COALESCE((
+             SELECT SUM(oi.unit_supplier_cost_inr * oi.quantity)
+             FROM public.order_items oi
+             JOIN public.orders o2 ON o2.id = oi.order_id
+             WHERE o2.status NOT IN ('cancelled', 'refunded')
+           ), 0)::text AS supplier_cost,
+           COALESCE((
+             SELECT SUM(oi.net_profit_inr)
+             FROM public.order_items oi
+             JOIN public.orders o2 ON o2.id = oi.order_id
+             WHERE o2.status NOT IN ('cancelled', 'refunded')
+           ), 0)::text AS net_profit,
+           (SELECT COUNT(*)::text FROM public.refunds) AS refunds_count
+         FROM public.orders o`
+      ),
       db.query<{
         id: string;
         order_number: string;
@@ -316,6 +337,10 @@ adminRouter.get(
         pendingOrders: Number(orderStatsRes.rows[0]?.pending || '0'),
         completedOrders: Number(orderStatsRes.rows[0]?.completed || '0'),
         totalCustomers: Number(customerStatsRes.rows[0]?.total || '0'),
+        grossOrderVolumeInr: Number(financialStatsRes.rows[0]?.gross_volume || '0'),
+        totalSupplierCostInr: Number(financialStatsRes.rows[0]?.supplier_cost || '0'),
+        estimatedNetProfitInr: Number(financialStatsRes.rows[0]?.net_profit || '0'),
+        refundsCount: Number(financialStatsRes.rows[0]?.refunds_count || '0'),
       },
       recentOrders: recentOrdersRes.rows.map((r) => ({
         id: r.id,
@@ -486,6 +511,19 @@ adminRouter.post(
       return;
     }
 
+    for (const field of g.playerFields) {
+      if (field.pattern) {
+        const regexCheck = validateSafeRegexPattern(field.pattern);
+        if (!regexCheck.valid) {
+          res.status(400).json({
+            error: `Field "${field.label}" regex error: ${regexCheck.error}`,
+            code: 'INVALID_FIELD_REGEX',
+          });
+          return;
+        }
+      }
+    }
+
     const db = getDb();
     const existingSlug = await db.query<{ id: string }>(
       'SELECT id FROM public.games WHERE slug = $1 LIMIT 1',
@@ -562,6 +600,19 @@ adminRouter.patch(
           code: 'FORBIDDEN_PLAYER_FIELD',
         });
         return;
+      }
+
+      for (const field of u.playerFields) {
+        if (field.pattern) {
+          const regexCheck = validateSafeRegexPattern(field.pattern);
+          if (!regexCheck.valid) {
+            res.status(400).json({
+              error: `Field "${field.label}" regex error: ${regexCheck.error}`,
+              code: 'INVALID_FIELD_REGEX',
+            });
+            return;
+          }
+        }
       }
     }
 
@@ -699,6 +750,142 @@ adminRouter.delete(
       resourceId: req.params.id,
       req,
       details: { title: existing.rows[0].title },
+    });
+
+    res.json({ ok: true });
+  }
+);
+
+adminRouter.get(
+  '/catalog/games/:id/regions',
+  requirePermission('orders.read'),
+  async (req: AuthenticatedRequest, res) => {
+    const db = getDb();
+    const rows = await db.query<{
+      id: string;
+      game_id: string;
+      region_code: string;
+      region_name: string;
+      server_hint: string | null;
+      is_active: boolean;
+    }>(
+      `SELECT id, game_id, region_code, region_name, server_hint, is_active
+       FROM public.game_regions
+       WHERE game_id = $1
+       ORDER BY region_name ASC`,
+      [req.params.id]
+    );
+
+    const regions: AdminGameRegionItem[] = rows.rows.map((r) => ({
+      id: r.id,
+      gameId: r.game_id,
+      regionCode: r.region_code,
+      regionName: r.region_name,
+      serverHint: r.server_hint,
+      isActive: r.is_active,
+    }));
+
+    res.json({ regions });
+  }
+);
+
+adminRouter.post(
+  '/catalog/games/:id/regions',
+  requirePermission('orders.manage'),
+  async (req: AuthenticatedRequest, res) => {
+    const parsed = adminCreateGameRegionSchema.safeParse(req.body);
+    if (!parsed.success) {
+      res.status(400).json({
+        error: parsed.error.issues[0]?.message || 'Invalid region payload.',
+        code: 'VALIDATION_ERROR',
+      });
+      return;
+    }
+
+    const db = getDb();
+    const gameRes = await db.query<{ id: string }>(
+      'SELECT id FROM public.games WHERE id = $1 LIMIT 1',
+      [req.params.id]
+    );
+    if (!gameRes.rows[0]) {
+      res.status(404).json({ error: 'Game not found.', code: 'NOT_FOUND' });
+      return;
+    }
+
+    const clash = await db.query<{ id: string }>(
+      'SELECT id FROM public.game_regions WHERE game_id = $1 AND region_code = $2 LIMIT 1',
+      [req.params.id, parsed.data.regionCode]
+    );
+    if (clash.rows[0]) {
+      res.status(409).json({
+        error: `Region code "${parsed.data.regionCode}" already exists for this game.`,
+        code: 'DUPLICATE_REGION',
+      });
+      return;
+    }
+
+    const inserted = await db.query<{
+      id: string;
+      game_id: string;
+      region_code: string;
+      region_name: string;
+      server_hint: string | null;
+      is_active: boolean;
+    }>(
+      `INSERT INTO public.game_regions (game_id, region_code, region_name, server_hint, is_active)
+       VALUES ($1, $2, $3, $4, TRUE)
+       RETURNING id, game_id, region_code, region_name, server_hint, is_active`,
+      [req.params.id, parsed.data.regionCode, parsed.data.regionName, parsed.data.serverHint || null]
+    );
+
+    const r = inserted.rows[0];
+    await writeAuditLog({
+      actorProfileId: req.authUser!.profileId,
+      actorRole: req.authUser!.roleCode,
+      action: 'admin.catalog_region_created',
+      resourceType: 'game_regions',
+      resourceId: r.id,
+      req,
+      details: { gameId: req.params.id, regionCode: r.region_code, regionName: r.region_name },
+    });
+
+    res.status(201).json({
+      region: {
+        id: r.id,
+        gameId: r.game_id,
+        regionCode: r.region_code,
+        regionName: r.region_name,
+        serverHint: r.server_hint,
+        isActive: r.is_active,
+      } satisfies AdminGameRegionItem,
+    });
+  }
+);
+
+adminRouter.delete(
+  '/catalog/regions/:regionId',
+  requirePermission('orders.manage'),
+  async (req: AuthenticatedRequest, res) => {
+    const db = getDb();
+    const existing = await db.query<{ id: string; region_name: string; game_id: string }>(
+      'SELECT id, region_name, game_id FROM public.game_regions WHERE id = $1 LIMIT 1',
+      [req.params.regionId]
+    );
+    if (!existing.rows[0]) {
+      res.status(404).json({ error: 'Region not found.', code: 'NOT_FOUND' });
+      return;
+    }
+
+    await db.query('DELETE FROM public.game_regions WHERE id = $1', [req.params.regionId]);
+
+    await writeAuditLog({
+      actorProfileId: req.authUser!.profileId,
+      actorRole: req.authUser!.roleCode,
+      action: 'admin.catalog_region_deleted',
+      resourceType: 'game_regions',
+      resourceId: req.params.regionId,
+      req,
+      details: { gameId: existing.rows[0].game_id, regionName: existing.rows[0].region_name },
     });
 
     res.json({ ok: true });
@@ -1339,8 +1526,9 @@ adminRouter.patch(
       name: string;
       price_inr: string;
       original_price_inr: string | null;
+      supplier_cost_inr: string;
     }>(
-      'SELECT id, name, price_inr::text, original_price_inr::text FROM public.packages WHERE id = $1 LIMIT 1',
+      'SELECT id, name, price_inr::text, original_price_inr::text, supplier_cost_inr::text FROM public.packages WHERE id = $1 LIMIT 1',
       [req.params.id]
     );
     const cur = existing.rows[0];
@@ -1350,7 +1538,7 @@ adminRouter.patch(
     }
 
     const pricing = computeNormalizedPackagePricing({
-      priceInr: parsed.data.priceInr,
+      priceInr: parsed.data.priceInr ?? Number(cur.price_inr),
       originalPriceInr:
         parsed.data.originalPriceInr !== undefined
           ? parsed.data.originalPriceInr
@@ -1364,19 +1552,32 @@ adminRouter.patch(
       return;
     }
 
+    const nextSupplierCost =
+      parsed.data.supplierCostInr !== undefined
+        ? parsed.data.supplierCostInr
+        : Number(cur.supplier_cost_inr || '0');
+
     const updated = await db.query<{
       id: string;
       price_inr: string;
       original_price_inr: string | null;
       discount_percent: string;
+      supplier_cost_inr: string;
     }>(
       `UPDATE public.packages
        SET price_inr = $1,
            original_price_inr = $2,
-           discount_percent = $3
-       WHERE id = $4
-       RETURNING id, price_inr::text, original_price_inr::text, discount_percent::text`,
-      [pricing.priceInr, pricing.originalPriceInr, pricing.discountPercent, req.params.id]
+           discount_percent = $3,
+           supplier_cost_inr = $4
+       WHERE id = $5
+       RETURNING id, price_inr::text, original_price_inr::text, discount_percent::text, supplier_cost_inr::text`,
+      [
+        pricing.priceInr,
+        pricing.originalPriceInr,
+        pricing.discountPercent,
+        nextSupplierCost,
+        req.params.id,
+      ]
     );
 
     await writeAuditLog({
@@ -1391,6 +1592,7 @@ adminRouter.patch(
         priceInr: pricing.priceInr,
         originalPriceInr: pricing.originalPriceInr,
         discountPercent: pricing.discountPercent,
+        supplierCostInr: nextSupplierCost,
       },
     });
 
@@ -1401,6 +1603,7 @@ adminRouter.patch(
         ? Number(updated.rows[0].original_price_inr)
         : null,
       discountPercent: Number(updated.rows[0].discount_percent),
+      supplierCostInr: Number(updated.rows[0].supplier_cost_inr || '0'),
     });
   }
 );
@@ -1736,6 +1939,8 @@ interface AdminOrderRow {
   processing_started_at: string | null;
   completed_by_name: string | null;
   fulfilled_at: string | null;
+  gateway_tx_id: string | null;
+  supplier_tx_id: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -1777,6 +1982,8 @@ function mapAdminOrderRow(r: AdminOrderRow): AdminOrderItem {
     processingStartedAt: r.processing_started_at,
     completedByName: r.completed_by_name,
     fulfilledAt: r.fulfilled_at,
+    gatewayTxId: r.gateway_tx_id,
+    supplierTxId: r.supplier_tx_id,
     createdAt: r.created_at,
     updatedAt: r.updated_at,
   };
@@ -1795,6 +2002,20 @@ const ADMIN_ORDER_BASE_SELECT = `
     o.customer_note, o.admin_note, o.delivery_notes, o.customer_delivery_message,
     proc_prof.full_name AS processed_by_name, o.processing_started_at,
     comp_prof.full_name AS completed_by_name, o.fulfilled_at,
+    (
+      SELECT COALESCE(pay.razorpay_payment_id, pay.razorpay_order_id)
+      FROM public.payments pay
+      WHERE pay.order_id = o.id
+      ORDER BY pay.created_at DESC
+      LIMIT 1
+    ) AS gateway_tx_id,
+    (
+      SELECT so.external_reference
+      FROM public.supplier_orders so
+      WHERE so.order_item_id = oi.id AND so.external_reference IS NOT NULL
+      ORDER BY so.created_at DESC
+      LIMIT 1
+    ) AS supplier_tx_id,
     o.created_at, o.updated_at
   FROM public.orders o
   LEFT JOIN public.customers c ON c.id = o.customer_id
@@ -1833,7 +2054,7 @@ adminRouter.get(
         if (search) {
           const playerBlob = Object.values(o.playerDetails).join(' ');
           const hay =
-            `${o.orderNumber} ${o.targetPlayerUid} ${playerBlob} ${o.customerEmail} ${o.customerName} ${o.gameTitle}`.toLowerCase();
+            `${o.orderNumber} ${o.targetPlayerUid} ${playerBlob} ${o.customerEmail} ${o.customerName} ${o.gameTitle} ${o.gatewayTxId || ''} ${o.supplierTxId || ''}`.toLowerCase();
           if (!hay.includes(search)) return false;
         }
         return true;
